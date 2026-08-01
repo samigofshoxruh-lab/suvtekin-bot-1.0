@@ -3,8 +3,17 @@
 // Языки интерфейса: русский, o'zbekcha, english
 // ============================================================
 require('dotenv').config();
+const path = require('path');
 const { Telegraf, Markup } = require('telegraf');
 const { createClient } = require('@supabase/supabase-js');
+
+// Экранирование для parse_mode: 'HTML' — обязательно для любого текста,
+// который приходит из базы (описание, имя марки и т.п.), иначе спецсимволы
+// <, >, & могут сломать разметку и отправка сообщения целиком не пройдёт.
+function esc(value) {
+  return String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+const DIVIDER = '▫️▫️▫️▫️▫️▫️▫️▫️▫️▫️▫️▫️';
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const SUPABASE_URL = process.env.SUPABASE_URL;
@@ -67,11 +76,11 @@ http
 const T = {
   ru: {
     chooseLanguage: 'Выберите язык интерфейса:',
-    welcome: (name) => `👋 Добро пожаловать в ${name}!\n\nЗдесь вы можете подобрать автомобиль по категории, марке и модели.`,
+    welcome: (name) => `👋 <b>Добро пожаловать в ${name}!</b>\n\nПодберём автомобиль за пару шагов — категория → марка → модель.\nИли, если хотите продать свою машину — оставьте заявку ниже.`,
     searchBtn: '🔍 Найти автомобиль',
-    chooseCategory: '📂 Выберите категорию автомобиля:',
-    chooseBrand: '🏷 Выберите марку:',
-    chooseModel: '📋 Выберите модель:',
+    chooseCategory: '📂 <b>Выберите категорию автомобиля</b>',
+    chooseBrand: '🏷 <b>Выберите марку</b>',
+    chooseModel: '📋 <b>Выберите модель</b>',
     allBrands: '🚗 Все марки',
     allModels: '🚘 Все модели',
     backToCategories: '⬅️ Назад к категориям',
@@ -87,7 +96,7 @@ const T = {
     call: '📞 Позвонить',
     prev: '◀️ Пред.',
     next: 'След. ▶️',
-    actions: 'Действия:',
+    actions: '⬇️ Что дальше?',
     year: 'Год',
     category: 'Категория',
     price: 'Цена',
@@ -127,11 +136,11 @@ const T = {
   },
   uz: {
     chooseLanguage: 'Interfeys tilini tanlang:',
-    welcome: (name) => `👋 ${name} ga xush kelibsiz!\n\nBu yerda siz kategoriya, marka va model bo'yicha avtomobil tanlashingiz mumkin.`,
+    welcome: (name) => `👋 <b>${name} ga xush kelibsiz!</b>\n\nBir necha qadamda avtomobil topamiz — kategoriya → marka → model.\nO'z avtomobilingizni sotmoqchi bo'lsangiz — pastdan ariza qoldiring.`,
     searchBtn: '🔍 Avtomobil qidirish',
-    chooseCategory: '📂 Avtomobil kategoriyasini tanlang:',
-    chooseBrand: '🏷 Markani tanlang:',
-    chooseModel: '📋 Modelni tanlang:',
+    chooseCategory: '📂 <b>Avtomobil kategoriyasini tanlang</b>',
+    chooseBrand: '🏷 <b>Markani tanlang</b>',
+    chooseModel: '📋 <b>Modelni tanlang</b>',
     allBrands: '🚗 Barcha markalar',
     allModels: '🚘 Barcha modellar',
     backToCategories: '⬅️ Kategoriyalarga qaytish',
@@ -147,7 +156,7 @@ const T = {
     call: "📞 Qo'ng'iroq qilish",
     prev: '◀️ Oldingi',
     next: 'Keyingi ▶️',
-    actions: 'Amallar:',
+    actions: '⬇️ Keyingi qadam?',
     year: 'Yili',
     category: 'Kategoriya',
     price: 'Narxi',
@@ -187,11 +196,11 @@ const T = {
   },
   en: {
     chooseLanguage: 'Choose interface language:',
-    welcome: (name) => `👋 Welcome to ${name}!\n\nHere you can find a car by category, brand and model.`,
+    welcome: (name) => `👋 <b>Welcome to ${name}!</b>\n\nLet's find you a car in a few taps — category → brand → model.\nWant to sell your own car instead? Submit a request below.`,
     searchBtn: '🔍 Find a car',
-    chooseCategory: '📂 Choose a car category:',
-    chooseBrand: '🏷 Choose a brand:',
-    chooseModel: '📋 Choose a model:',
+    chooseCategory: '📂 <b>Choose a car category</b>',
+    chooseBrand: '🏷 <b>Choose a brand</b>',
+    chooseModel: '📋 <b>Choose a model</b>',
     allBrands: '🚗 All brands',
     allModels: '🚘 All models',
     backToCategories: '⬅️ Back to categories',
@@ -207,7 +216,7 @@ const T = {
     call: '📞 Call',
     prev: '◀️ Prev',
     next: 'Next ▶️',
-    actions: 'Actions:',
+    actions: '⬇️ What next?',
     year: 'Year',
     category: 'Category',
     price: 'Price',
@@ -261,6 +270,17 @@ function categoryName(name, lang) {
   return CATEGORY_TRANSLATIONS[name]?.[lang] || name;
 }
 
+async function getCategoryLabel(session) {
+  if (!session.categoryId) return '';
+  const { data } = await supabase.from('categories').select('name').eq('id', session.categoryId).single();
+  return data ? categoryName(data.name, session.lang || 'ru') : '';
+}
+
+async function getBrandLabel(brandId) {
+  const { data } = await supabase.from('brands').select('name').eq('id', brandId).single();
+  return data?.name || '';
+}
+
 // -------------------- СЕССИИ --------------------
 const sessions = new Map();
 function getSession(chatId) {
@@ -302,13 +322,23 @@ bot.action(/^lang:(ru|uz|en)$/, async (ctx) => {
   const session = getSession(ctx.chat.id);
   session.lang = ctx.match[1];
   const s = t(ctx);
-  await ctx.editMessageText(
-    s.welcome(COMPANY_NAME),
-    Markup.inlineKeyboard([
-      [Markup.button.callback(s.searchBtn, 'search:start')],
-      [Markup.button.callback(s.sellBtn, 'sell:start')],
-    ])
-  );
+  const keyboard = Markup.inlineKeyboard([
+    [Markup.button.callback(s.searchBtn, 'search:start')],
+    [Markup.button.callback(s.sellBtn, 'sell:start')],
+  ]);
+  try {
+    // Красивое приветствие с логотипом вместо голого текста. Заменить
+    // текстовое сообщение (выбор языка) на фото через editMessage нельзя —
+    // поэтому старое сообщение удаляем и присылаем новое фото-баннер.
+    await ctx.deleteMessage().catch(() => {});
+    await ctx.replyWithPhoto(
+      { source: path.join(__dirname, 'logo.png') },
+      { caption: s.welcome(COMPANY_NAME), parse_mode: 'HTML', ...keyboard }
+    );
+  } catch (e) {
+    console.error('Не удалось отправить приветственный баннер:', e);
+    await ctx.reply(s.welcome(COMPANY_NAME), { parse_mode: 'HTML', ...keyboard });
+  }
 });
 
 bot.action('search:start', async (ctx) => {
@@ -374,7 +404,8 @@ async function showBrands(ctx) {
   buttons.push([Markup.button.callback(s.allBrands, 'brand:all')]);
   buttons.push([Markup.button.callback(s.backToCategories, 'back:categories')]);
 
-  await editOrReply(ctx, s.chooseBrand, Markup.inlineKeyboard(buttons));
+  const catLabel = await getCategoryLabel(session);
+  await editOrReply(ctx, `📂 <i>${esc(catLabel)}</i>\n\n${s.chooseBrand}`, Markup.inlineKeyboard(buttons));
 }
 
 bot.action('back:categories', async (ctx) => {
@@ -419,7 +450,10 @@ async function showModels(ctx) {
   buttons.push([Markup.button.callback(s.allModels, 'model:all')]);
   buttons.push([Markup.button.callback(s.backToBrands, 'back:brands')]);
 
-  await editOrReply(ctx, s.chooseModel, Markup.inlineKeyboard(buttons));
+  const catLabel = await getCategoryLabel(session);
+  let breadcrumb = `📂 <i>${esc(catLabel)}</i>`;
+  if (session.brandId) breadcrumb += ` › 🏷 <i>${esc(await getBrandLabel(session.brandId))}</i>`;
+  await editOrReply(ctx, `${breadcrumb}\n\n${s.chooseModel}`, Markup.inlineKeyboard(buttons));
 }
 
 bot.action('back:brands', async (ctx) => {
@@ -509,18 +543,24 @@ async function sendCurrentListing(ctx) {
   }
 
   const categoryLabel = categoryName(listing.category_name, session.lang || 'ru');
+  const positionLine = session.results.length > 1
+    ? `\n${DIVIDER}\n📄 ${session.index + 1}/${session.results.length}`
+    : '';
 
   const caption =
-    `🚗 *${listing.brand_name} ${listing.model_name}* (${listing.year || '—'})\n\n` +
-    `📂 ${s.category}: ${categoryLabel}\n` +
-    `💰 ${s.price}: *${formatPrice(listing.price)} ${listing.currency}*\n` +
+    `🚘 <b>${esc(listing.brand_name)} ${esc(listing.model_name)}</b>` +
+    (listing.year ? ` · ${listing.year}` : '') +
+    `\n${DIVIDER}\n` +
+    `📂 ${s.category}: ${esc(categoryLabel)}\n` +
+    `💰 ${s.price}: <b>${formatPrice(listing.price)} ${esc(listing.currency)}</b>\n` +
     (listing.mileage_km ? `🛣 ${s.mileage}: ${listing.mileage_km.toLocaleString('ru-RU')} ${s.km}\n` : '') +
-    (listing.engine ? `⚙️ ${s.engine}: ${listing.engine}\n` : '') +
-    (listing.transmission ? `🔧 ${s.transmission}: ${listing.transmission}\n` : '') +
-    (listing.drive_type ? `🛞 ${s.drive}: ${listing.drive_type}\n` : '') +
-    (listing.color ? `🎨 ${s.color}: ${listing.color}\n` : '') +
-    (listing.description ? `\n📝 ${listing.description}\n` : '') +
-    `\n📞 ${s.phone}: ${listing.phone}`;
+    (listing.engine ? `⚙️ ${s.engine}: ${esc(listing.engine)}\n` : '') +
+    (listing.transmission ? `🔧 ${s.transmission}: ${esc(listing.transmission)}\n` : '') +
+    (listing.drive_type ? `🛞 ${s.drive}: ${esc(listing.drive_type)}\n` : '') +
+    (listing.color ? `🎨 ${s.color}: ${esc(listing.color)}\n` : '') +
+    (listing.description ? `\n<i>${esc(listing.description)}</i>\n` : '') +
+    `\n📞 ${s.phone}: <code>${esc(listing.phone)}</code>` +
+    positionLine;
 
   const navButtons = [];
   if (session.results.length > 1) {
@@ -535,9 +575,12 @@ async function sendCurrentListing(ctx) {
   if (navButtons.length) keyboardRows.push(navButtons);
   // Кнопку "url" со схемой tel: Telegram Bot API отклоняет (разрешены только
   // http(s)/tg) — это ломало отправку ВСЕГО сообщения с кнопками, включая
-  // листалку. Номер телефона и так показан текстом в самой карточке выше.
-  keyboardRows.push([Markup.button.callback(s.changeModel, 'change:model')]);
-  keyboardRows.push([Markup.button.callback(s.newSearch, 'search:start')]);
+  // листалку. Номер телефона и так показан текстом в самой карточке выше
+  // (в <code>, поэтому в Telegram по нему можно тапнуть, чтобы скопировать).
+  keyboardRows.push([
+    Markup.button.callback(s.changeModel, 'change:model'),
+    Markup.button.callback(s.newSearch, 'search:start'),
+  ]);
   keyboardRows.push([Markup.button.callback(s.sellBtn, 'sell:start')]);
 
   const urls = (photos || []).map((p) => p.url).filter(Boolean).slice(0, 4);
@@ -547,7 +590,7 @@ async function sendCurrentListing(ctx) {
     if (urls.length === 1) {
       // Telegram API отклоняет replyWithMediaGroup из одного элемента —
       // раньше это уходило в catch и объявление отправлялось вовсе без фото.
-      const sentPhoto = await ctx.replyWithPhoto(urls[0], { caption, parse_mode: 'Markdown' });
+      const sentPhoto = await ctx.replyWithPhoto(urls[0], { caption, parse_mode: 'HTML' });
       newMessageIds.push(sentPhoto.message_id);
       const sentActions = await ctx.reply(s.actions, Markup.inlineKeyboard(keyboardRows));
       newMessageIds.push(sentActions.message_id);
@@ -555,19 +598,19 @@ async function sendCurrentListing(ctx) {
       const media = urls.map((url, i) => ({
         type: 'photo',
         media: url,
-        ...(i === 0 ? { caption, parse_mode: 'Markdown' } : {}),
+        ...(i === 0 ? { caption, parse_mode: 'HTML' } : {}),
       }));
       const sentMedia = await ctx.replyWithMediaGroup(media);
       sentMedia.forEach((m) => newMessageIds.push(m.message_id));
       const sentActions = await ctx.reply(s.actions, Markup.inlineKeyboard(keyboardRows));
       newMessageIds.push(sentActions.message_id);
     } else {
-      const sentText = await ctx.reply(caption, { parse_mode: 'Markdown', ...Markup.inlineKeyboard(keyboardRows) });
+      const sentText = await ctx.reply(caption, { parse_mode: 'HTML', ...Markup.inlineKeyboard(keyboardRows) });
       newMessageIds.push(sentText.message_id);
     }
   } catch (e) {
     console.error('Ошибка отправки объявления:', e);
-    const sentText = await ctx.reply(caption, { parse_mode: 'Markdown', ...Markup.inlineKeyboard(keyboardRows) });
+    const sentText = await ctx.reply(caption, { parse_mode: 'HTML', ...Markup.inlineKeyboard(keyboardRows) });
     newMessageIds.push(sentText.message_id);
   }
 
@@ -620,6 +663,22 @@ function sellCancelKeyboard(s) {
   return Markup.inlineKeyboard([[Markup.button.callback(s.sell.cancelBtn, 'sell:cancel')]]);
 }
 
+const TOTAL_SELL_STEPS = SELL_STEPS.length + 1; // +1 за шаг выбора категории
+const STEP_LABEL = {
+  ru: (i, n) => `<i>Шаг ${i} из ${n}</i>`,
+  uz: (i, n) => `<i>${i}-qadam / ${n}</i>`,
+  en: (i, n) => `<i>Step ${i} of ${n}</i>`,
+};
+function sellStepNumber(key) {
+  if (key === 'category') return 1;
+  return SELL_STEPS.findIndex((st) => st.key === key) + 2;
+}
+function sellPrompt(ctx, session, text) {
+  const s = t(ctx);
+  const stepLine = STEP_LABEL[session.lang || 'ru'](sellStepNumber(session.sell.step), TOTAL_SELL_STEPS);
+  return ctx.reply(`${stepLine}\n${text}`, { parse_mode: 'HTML', ...sellCancelKeyboard(s) });
+}
+
 bot.action('sell:start', async (ctx) => {
   await ctx.answerCbQuery();
   const s = t(ctx);
@@ -637,14 +696,15 @@ bot.action('sell:start', async (ctx) => {
     // Категорий нет — пропускаем этот шаг, начинаем сразу с марки.
     session.sell.step = 'brand';
     session.sell.stepIndex = 0;
-    return ctx.reply(s.sell.brand, sellCancelKeyboard(s));
+    return sellPrompt(ctx, session, s.sell.brand);
   }
 
   const buttons = categories.map((c) => [
     Markup.button.callback(categoryName(c.name, session.lang || 'ru'), `sellcat:${c.id}`),
   ]);
   buttons.push([Markup.button.callback(s.sell.cancelBtn, 'sell:cancel')]);
-  await ctx.reply(s.sell.category, Markup.inlineKeyboard(buttons));
+  const stepLine = STEP_LABEL[session.lang || 'ru'](1, TOTAL_SELL_STEPS);
+  await ctx.reply(`${stepLine}\n${s.sell.category}`, { parse_mode: 'HTML', ...Markup.inlineKeyboard(buttons) });
 });
 
 bot.action(/^sellcat:(.+)$/, async (ctx) => {
@@ -655,7 +715,7 @@ bot.action(/^sellcat:(.+)$/, async (ctx) => {
   session.sell.data.category_id = ctx.match[1];
   session.sell.step = 'brand';
   session.sell.stepIndex = 0;
-  await ctx.reply(s.sell.brand, sellCancelKeyboard(s));
+  await sellPrompt(ctx, session, s.sell.brand);
 });
 
 bot.action('sell:cancel', async (ctx) => {
@@ -663,7 +723,7 @@ bot.action('sell:cancel', async (ctx) => {
   const s = t(ctx);
   const session = getSession(ctx.chat.id);
   session.sell = null;
-  await ctx.reply(s.sell.cancelled);
+  await ctx.reply(`❌ ${s.sell.cancelled}`);
 });
 
 bot.action(/^sellcur:(USD|UZS|EUR)$/, async (ctx) => {
@@ -760,20 +820,21 @@ async function advanceSellStep(ctx, session) {
   session.sell.step = nextStep.key;
 
   if (nextStep.kind === 'currency') {
-    return ctx.reply(
-      s.sell.currency,
-      Markup.inlineKeyboard([
+    const stepLine = STEP_LABEL[session.lang || 'ru'](sellStepNumber('currency'), TOTAL_SELL_STEPS);
+    return ctx.reply(`${stepLine}\n${s.sell.currency}`, {
+      parse_mode: 'HTML',
+      ...Markup.inlineKeyboard([
         [
           Markup.button.callback('USD', 'sellcur:USD'),
           Markup.button.callback('UZS', 'sellcur:UZS'),
           Markup.button.callback('EUR', 'sellcur:EUR'),
         ],
         [Markup.button.callback(s.sell.cancelBtn, 'sell:cancel')],
-      ])
-    );
+      ]),
+    });
   }
 
-  await ctx.reply(s.sell[nextStep.key], sellCancelKeyboard(s));
+  await sellPrompt(ctx, session, s.sell[nextStep.key]);
 }
 
 async function showSellConfirmation(ctx, session) {
@@ -782,27 +843,28 @@ async function showSellConfirmation(ctx, session) {
   session.sell.step = 'confirm';
 
   const lines = [
-    s.sell.confirmTitle,
-    '',
-    `🚗 ${d.brand} ${d.model}${d.year ? ` (${d.year})` : ''}`,
-    d.price ? `💰 ${formatPrice(d.price)} ${d.currency}` : null,
+    `✅ <b>${esc(s.sell.confirmTitle.replace(/^✅\s*/, ''))}</b>`,
+    DIVIDER,
+    `🚘 <b>${esc(d.brand)} ${esc(d.model)}</b>${d.year ? ` · ${d.year}` : ''}`,
+    d.price ? `💰 <b>${formatPrice(d.price)} ${esc(d.currency)}</b>` : null,
     d.mileage ? `🛣 ${d.mileage.toLocaleString('ru-RU')} ${s.km}` : null,
-    d.engine ? `⚙️ ${d.engine}` : null,
-    d.transmission ? `🔧 ${d.transmission}` : null,
-    d.drive ? `🛞 ${d.drive}` : null,
-    d.color ? `🎨 ${d.color}` : null,
-    d.description ? `📝 ${d.description}` : null,
-    `📞 ${d.phone}`,
-    `🙋 ${d.name}`,
+    d.engine ? `⚙️ ${esc(d.engine)}` : null,
+    d.transmission ? `🔧 ${esc(d.transmission)}` : null,
+    d.drive ? `🛞 ${esc(d.drive)}` : null,
+    d.color ? `🎨 ${esc(d.color)}` : null,
+    d.description ? `\n<i>${esc(d.description)}</i>` : null,
+    DIVIDER,
+    `📞 <code>${esc(d.phone)}</code>`,
+    `🙋 ${esc(d.name)}`,
   ].filter(Boolean);
 
-  await ctx.reply(
-    lines.join('\n'),
-    Markup.inlineKeyboard([
+  await ctx.reply(lines.join('\n'), {
+    parse_mode: 'HTML',
+    ...Markup.inlineKeyboard([
       [Markup.button.callback(s.sell.send, 'sell:confirm')],
       [Markup.button.callback(s.sell.cancelBtn, 'sell:cancel')],
-    ])
-  );
+    ]),
+  });
 }
 
 // Необязательное уведомление админам в Telegram о новой заявке.
@@ -843,20 +905,53 @@ function formatPrice(price) {
 }
 
 async function editOrReply(ctx, text, keyboard) {
+  const extra = { parse_mode: 'HTML', ...(keyboard || {}) };
   try {
     if (ctx.updateType === 'callback_query') {
-      await ctx.editMessageText(text, keyboard);
+      await ctx.editMessageText(text, extra);
       return;
     }
   } catch (e) {
     // если сообщение нельзя отредактировать — отправим новое
   }
-  await ctx.reply(text, keyboard);
+  await ctx.reply(text, extra);
 }
 
 bot.catch((err, ctx) => {
   console.error(`Ошибка у ${ctx.updateType}:`, err);
 });
+
+// /sell — быстрый способ сразу начать заявку на продажу, без выбора языка
+// заново (если язык уже был выбран раньше) или после короткого выбора языка.
+bot.command('sell', async (ctx) => {
+  const session = getSession(ctx.chat.id);
+  if (!session.lang) {
+    await ctx.reply(
+      'Выберите язык / Tilni tanlang / Choose language:',
+      Markup.inlineKeyboard([
+        [Markup.button.callback('🇷🇺 Русский', 'lang-sell:ru')],
+        [Markup.button.callback("🇺🇿 O'zbekcha", 'lang-sell:uz')],
+        [Markup.button.callback('🇬🇧 English', 'lang-sell:en')],
+      ])
+    );
+    return;
+  }
+  await ctx.reply('👉', Markup.inlineKeyboard([[Markup.button.callback(t(ctx).sellBtn, 'sell:start')]]));
+});
+
+bot.action(/^lang-sell:(ru|uz|en)$/, async (ctx) => {
+  await ctx.answerCbQuery();
+  const session = getSession(ctx.chat.id);
+  session.lang = ctx.match[1];
+  await ctx.deleteMessage().catch(() => {});
+  await ctx.reply('👉', Markup.inlineKeyboard([[Markup.button.callback(t(ctx).sellBtn, 'sell:start')]]));
+});
+
+// Красивое меню команд рядом с полем ввода (значок "☰").
+bot.telegram.setMyCommands([
+  { command: 'start', description: '🏠 Главное меню / Bosh menyu / Main menu' },
+  { command: 'sell', description: '📝 Продать авто / Avto sotish / Sell a car' },
+]).catch((e) => console.error('Не удалось задать список команд:', e));
 
 bot.launch().then(() => console.log(`${COMPANY_NAME} бот запущен`));
 
