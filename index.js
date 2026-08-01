@@ -3,7 +3,6 @@
 // Языки интерфейса: русский, o'zbekcha, english
 // ============================================================
 require('dotenv').config();
-const path = require('path');
 const { Telegraf, Markup } = require('telegraf');
 const { createClient } = require('@supabase/supabase-js');
 
@@ -316,11 +315,6 @@ bot.start(async (ctx) => {
   );
 });
 
-// Кэш file_id логотипа: Telegram отдаёт file_id после первой загрузки файла,
-// и его можно переиспользовать вместо повторной загрузки байтов с диска —
-// это заметно быстрее при каждом следующем /start.
-let logoFileId = null;
-
 bot.action(/^lang:(ru|uz|en)$/, async (ctx) => {
   await ctx.answerCbQuery();
   const session = getSession(ctx.chat.id);
@@ -330,22 +324,12 @@ bot.action(/^lang:(ru|uz|en)$/, async (ctx) => {
     [Markup.button.callback(s.searchBtn, 'search:start')],
     [Markup.button.callback(s.sellBtn, 'sell:start')],
   ]);
+  // Просто редактируем уже отправленное сообщение с выбором языка —
+  // один быстрый запрос к Telegram вместо удаления старого сообщения
+  // и отправки нового (было ещё медленнее, когда сюда же грузили лого).
   try {
-    // Красивое приветствие с логотипом вместо голого текста. Заменить
-    // текстовое сообщение (выбор языка) на фото через editMessage нельзя —
-    // поэтому старое сообщение удаляем и присылаем новое фото-баннер.
-    await ctx.deleteMessage().catch(() => {});
-    const sentPhoto = await ctx.replyWithPhoto(
-      logoFileId || { source: path.join(__dirname, 'logo.png') },
-      { caption: s.welcome(COMPANY_NAME), parse_mode: 'HTML', ...keyboard }
-    );
-    // Сохраняем file_id после первой реальной загрузки, чтобы дальше слать
-    // логотип мгновенно, без повторной передачи файла на сервера Telegram.
-    if (!logoFileId) {
-      logoFileId = sentPhoto.photo[sentPhoto.photo.length - 1].file_id;
-    }
+    await ctx.editMessageText(s.welcome(COMPANY_NAME), { parse_mode: 'HTML', ...keyboard });
   } catch (e) {
-    console.error('Не удалось отправить приветственный баннер:', e);
     await ctx.reply(s.welcome(COMPANY_NAME), { parse_mode: 'HTML', ...keyboard });
   }
 });
@@ -954,8 +938,11 @@ bot.action(/^lang-sell:(ru|uz|en)$/, async (ctx) => {
   await ctx.answerCbQuery();
   const session = getSession(ctx.chat.id);
   session.lang = ctx.match[1];
-  await ctx.deleteMessage().catch(() => {});
-  await ctx.reply('👉', Markup.inlineKeyboard([[Markup.button.callback(t(ctx).sellBtn, 'sell:start')]]));
+  try {
+    await ctx.editMessageText('👉', Markup.inlineKeyboard([[Markup.button.callback(t(ctx).sellBtn, 'sell:start')]]));
+  } catch (e) {
+    await ctx.reply('👉', Markup.inlineKeyboard([[Markup.button.callback(t(ctx).sellBtn, 'sell:start')]]));
+  }
 });
 
 // Красивое меню команд рядом с полем ввода (значок "☰").
