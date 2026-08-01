@@ -13,7 +13,6 @@ const { createClient } = require('@supabase/supabase-js');
 function esc(value) {
   return String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
-const DIVIDER = '▫️▫️▫️▫️▫️▫️▫️▫️▫️▫️▫️▫️';
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const SUPABASE_URL = process.env.SUPABASE_URL;
@@ -544,13 +543,13 @@ async function sendCurrentListing(ctx) {
 
   const categoryLabel = categoryName(listing.category_name, session.lang || 'ru');
   const positionLine = session.results.length > 1
-    ? `\n${DIVIDER}\n📄 ${session.index + 1}/${session.results.length}`
+    ? `\n📄 ${session.index + 1}/${session.results.length}`
     : '';
 
   const caption =
     `🚘 <b>${esc(listing.brand_name)} ${esc(listing.model_name)}</b>` +
     (listing.year ? ` · ${listing.year}` : '') +
-    `\n${DIVIDER}\n` +
+    `\n\n` +
     `📂 ${s.category}: ${esc(categoryLabel)}\n` +
     `💰 ${s.price}: <b>${formatPrice(listing.price)} ${esc(listing.currency)}</b>\n` +
     (listing.mileage_km ? `🛣 ${s.mileage}: ${listing.mileage_km.toLocaleString('ru-RU')} ${s.km}\n` : '') +
@@ -843,8 +842,7 @@ async function showSellConfirmation(ctx, session) {
   session.sell.step = 'confirm';
 
   const lines = [
-    `✅ <b>${esc(s.sell.confirmTitle.replace(/^✅\s*/, ''))}</b>`,
-    DIVIDER,
+    `✅ <b>${esc(s.sell.confirmTitle.replace(/^✅\s*/, ''))}</b>\n`,
     `🚘 <b>${esc(d.brand)} ${esc(d.model)}</b>${d.year ? ` · ${d.year}` : ''}`,
     d.price ? `💰 <b>${formatPrice(d.price)} ${esc(d.currency)}</b>` : null,
     d.mileage ? `🛣 ${d.mileage.toLocaleString('ru-RU')} ${s.km}` : null,
@@ -853,8 +851,7 @@ async function showSellConfirmation(ctx, session) {
     d.drive ? `🛞 ${esc(d.drive)}` : null,
     d.color ? `🎨 ${esc(d.color)}` : null,
     d.description ? `\n<i>${esc(d.description)}</i>` : null,
-    DIVIDER,
-    `📞 <code>${esc(d.phone)}</code>`,
+    `\n📞 <code>${esc(d.phone)}</code>`,
     `🙋 ${esc(d.name)}`,
   ].filter(Boolean);
 
