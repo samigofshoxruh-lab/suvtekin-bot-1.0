@@ -316,6 +316,11 @@ bot.start(async (ctx) => {
   );
 });
 
+// Кэш file_id логотипа: Telegram отдаёт file_id после первой загрузки файла,
+// и его можно переиспользовать вместо повторной загрузки байтов с диска —
+// это заметно быстрее при каждом следующем /start.
+let logoFileId = null;
+
 bot.action(/^lang:(ru|uz|en)$/, async (ctx) => {
   await ctx.answerCbQuery();
   const session = getSession(ctx.chat.id);
@@ -330,10 +335,15 @@ bot.action(/^lang:(ru|uz|en)$/, async (ctx) => {
     // текстовое сообщение (выбор языка) на фото через editMessage нельзя —
     // поэтому старое сообщение удаляем и присылаем новое фото-баннер.
     await ctx.deleteMessage().catch(() => {});
-    await ctx.replyWithPhoto(
-      { source: path.join(__dirname, 'logo.png') },
+    const sentPhoto = await ctx.replyWithPhoto(
+      logoFileId || { source: path.join(__dirname, 'logo.png') },
       { caption: s.welcome(COMPANY_NAME), parse_mode: 'HTML', ...keyboard }
     );
+    // Сохраняем file_id после первой реальной загрузки, чтобы дальше слать
+    // логотип мгновенно, без повторной передачи файла на сервера Telegram.
+    if (!logoFileId) {
+      logoFileId = sentPhoto.photo[sentPhoto.photo.length - 1].file_id;
+    }
   } catch (e) {
     console.error('Не удалось отправить приветственный баннер:', e);
     await ctx.reply(s.welcome(COMPANY_NAME), { parse_mode: 'HTML', ...keyboard });
@@ -515,9 +525,13 @@ async function runSearch(ctx) {
 // не засорялся, когда клиент листает дальше, меняет модель или возвращается.
 async function clearListingMessages(ctx, session) {
   if (session.listingMessageIds && session.listingMessageIds.length) {
-    for (const id of session.listingMessageIds) {
-      try { await ctx.telegram.deleteMessage(ctx.chat.id, id); } catch (e) { /* уже удалено или слишком старое */ }
-    }
+    await Promise.all(
+      session.listingMessageIds.map((id) =>
+        ctx.telegram.deleteMessage(ctx.chat.id, id).catch(() => {
+          /* уже удалено или слишком старое */
+        })
+      )
+    );
   }
   session.listingMessageIds = [];
 }
