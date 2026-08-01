@@ -533,7 +533,9 @@ async function sendCurrentListing(ctx) {
 
   const keyboardRows = [];
   if (navButtons.length) keyboardRows.push(navButtons);
-  keyboardRows.push([Markup.button.url(s.call, `tel:${listing.phone.replace(/[^\d+]/g, '')}`)]);
+  // Кнопку "url" со схемой tel: Telegram Bot API отклоняет (разрешены только
+  // http(s)/tg) — это ломало отправку ВСЕГО сообщения с кнопками, включая
+  // листалку. Номер телефона и так показан текстом в самой карточке выше.
   keyboardRows.push([Markup.button.callback(s.changeModel, 'change:model')]);
   keyboardRows.push([Markup.button.callback(s.newSearch, 'search:start')]);
   keyboardRows.push([Markup.button.callback(s.sellBtn, 'sell:start')]);
